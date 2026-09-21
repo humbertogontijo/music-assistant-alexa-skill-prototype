@@ -51,9 +51,9 @@ apis = data.setdefault('manifest',{}).setdefault('apis', {})
 custom = apis.setdefault('custom', {})
 if endpoint:
     host = (urlparse(endpoint).hostname or "").lower()
-    # hooks.nabu.casa is a normal trusted certificate. User domains in this
-    # project are usually covered by a wildcard certificate.
-    cert_type = "Trusted" if host == "hooks.nabu.casa" else "Wildcard"
+    # Nabu Casa remote UI uses a normal trusted certificate. User domains in
+    # this project are usually covered by a wildcard certificate.
+    cert_type = "Trusted" if host.endswith(".ui.nabu.casa") else "Wildcard"
     custom['endpoint'] = { 'uri': endpoint, 'sslCertificateType': cert_type }
 else:
     ep = custom.get('endpoint') if isinstance(custom.get('endpoint'), dict) else None

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Music Assistant Alexa Skill",
-        "description": "Forwards Alexa skill requests from a Nabu Casa cloud webhook to the add-on."
+        "description": "Exposes the Alexa skill and Music Assistant stream on your Nabu Casa remote URL."
       }
     },
     "abort": {

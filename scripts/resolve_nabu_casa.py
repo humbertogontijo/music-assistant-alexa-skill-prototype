@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Resolve Nabu Casa URLs for the Alexa skill endpoint and the audio stream.
+"""Resolve Nabu Casa remote UI URLs for the Alexa skill and audio stream.
 
-Prints shell exports on success. Home Assistant Cloud must be connected,
-and this add-on must be allowed to call the Home Assistant API. When
-remote access is on and MA_HOSTNAME is empty, the stream export is the
-Nabu Casa remote address plus the local stream proxy path.
+When USE_NABU_CASA is on, always prints shell exports for SKILL_HOSTNAME and
+MA_HOSTNAME from the remote host. User-set values for those options are
+ignored. Home Assistant Cloud remote access must be connected.
 """
 import json
-import os
 import shlex
 import socket
 import sys
@@ -20,7 +18,7 @@ import urllib.request
 API = "http://supervisor/core/api"
 DOMAIN = "music_assistant_alexa_skill"
 PORT = 5000
-CLOUDHOOK_PATH = f"/{DOMAIN}/cloudhook"
+REGISTER_PATH = f"/{DOMAIN}/register"
 FLOW_PATH = "/config/config_entries/flow"
 
 
@@ -56,7 +54,7 @@ def _addon_base_url():
 def _register():
     status, body = _request(
         "POST",
-        CLOUDHOOK_PATH,
+        REGISTER_PATH,
         {"addon_base_url": _addon_base_url()},
     )
     return status, body
@@ -99,27 +97,31 @@ def _ensure_config_entry():
     return status == 200 and body.get("type") == "create_entry"
 
 
-def exports_for(body, existing_ma_hostname=""):
-    """Shell lines to eval, plus warnings that should not abort startup."""
+def exports_for(body):
+    """Shell lines to eval, plus warnings that should not abort startup.
+
+    Always overwrites SKILL_HOSTNAME and MA_HOSTNAME from the remote URLs.
+    """
     lines = []
     warnings = []
-    url = (body.get("cloudhook_url") or "").strip()
-    if url.startswith("https://"):
-        lines.append(f"export SKILL_HOSTNAME={shlex.quote(url)}")
+    skill = (body.get("skill_url") or "").strip()
     stream = (body.get("remote_stream_url") or "").strip()
-    if stream.startswith("https://") and not (existing_ma_hostname or "").strip():
+    if skill.startswith("https://"):
+        lines.append(f"export SKILL_HOSTNAME={shlex.quote(skill)}")
+    if stream.startswith("https://"):
         lines.append(f"export MA_HOSTNAME={shlex.quote(stream)}")
-    elif not (existing_ma_hostname or "").strip():
+
+    if not skill.startswith("https://") or not stream.startswith("https://"):
         if body.get("remote_enabled") and not body.get("remote_connected"):
             warnings.append(
-                "Home Assistant Cloud remote access is enabled but not connected yet, "
-                "so MA_HOSTNAME was left empty."
+                "Home Assistant Cloud remote access is enabled but not connected yet."
             )
         elif not body.get("remote_enabled"):
             warnings.append(
-                "Turn on Home Assistant Cloud remote access so an Echo can download audio, "
-                "or set MA_HOSTNAME to your own public stream host."
+                "Turn on Home Assistant Cloud remote access so Alexa and Echo "
+                "can reach this skill through your *.ui.nabu.casa address."
             )
+
     if stream.startswith("https://") and not (body.get("ma_stream_base") or "").strip():
         warnings.append(
             "Music Assistant add-on was not found or is not started. "
@@ -147,12 +149,28 @@ def main():
                     continue
                 last_error = (
                     "The Music Assistant Alexa Skill integration is not loaded yet. "
-                    "Restart Home Assistant once, then start this add-on again. "
-                    "Home Assistant Cloud must be signed in."
+                    "Start this add-on once, restart Home Assistant, add the "
+                    "Music Assistant Alexa Skill integration under Devices & services, "
+                    "turn on Cloud remote access, then start this add-on again."
                 )
             else:
                 last_error = f"HTTP {err.code}: {detail}"
-                if err.code in (401, 403, 503):
+                if err.code in (401, 403):
+                    print(last_error, file=sys.stderr)
+                    return 1
+                if err.code == 503:
+                    try:
+                        body = json.loads(detail) if detail else {}
+                    except Exception:
+                        body = {}
+                    if isinstance(body, dict) and (
+                        body.get("remote_enabled") is not None
+                        or "remote" in (body.get("error") or "").lower()
+                    ):
+                        last_error = body.get("error") or last_error
+                        if attempt < 5:
+                            time.sleep(3)
+                            continue
                     print(last_error, file=sys.stderr)
                     return 1
         except urllib.error.URLError as err:
@@ -160,35 +178,32 @@ def main():
         except Exception as err:
             last_error = str(err)
         else:
-            lines, warnings = exports_for(body, os.environ.get("MA_HOSTNAME", ""))
-            if lines:
-                waiting_for_remote = (
-                    body.get("remote_enabled")
-                    and not body.get("remote_connected")
-                    and not (os.environ.get("MA_HOSTNAME") or "").strip()
-                    and attempt < 5
-                )
-                if waiting_for_remote:
-                    time.sleep(3)
-                    continue
+            lines, warnings = exports_for(body)
+            waiting_for_remote = (
+                body.get("remote_enabled")
+                and not body.get("remote_connected")
+                and attempt < 5
+            )
+            if waiting_for_remote:
+                time.sleep(3)
+                continue
+            skill = (body.get("skill_url") or "").strip()
+            stream = (body.get("remote_stream_url") or "").strip()
+            if skill.startswith("https://") and stream.startswith("https://"):
                 print("\n".join(lines))
-                url = (body.get("cloudhook_url") or "").strip()
-                stream = (body.get("remote_stream_url") or "").strip()
-                if url:
-                    print(f"Nabu Casa skill URL: {url}", file=sys.stderr)
-                if stream and not (os.environ.get("MA_HOSTNAME") or "").strip():
-                    print(f"Nabu Casa stream URL: {stream}", file=sys.stderr)
+                print(f"Nabu Casa skill URL: {skill}", file=sys.stderr)
+                print(f"Nabu Casa stream URL: {stream}", file=sys.stderr)
                 for warning in warnings:
                     print(warning, file=sys.stderr)
                 return 0
-            last_error = body.get("error") or "cloud webhook URL missing"
-            if "not connected" in last_error.lower():
+            last_error = body.get("error") or "remote skill or stream URL missing"
+            if "not connected" in last_error.lower() or "remote access" in last_error.lower():
                 print(last_error, file=sys.stderr)
                 return 1
         if attempt < 5:
             time.sleep(3)
 
-    print(f"Could not get a Nabu Casa skill URL: {last_error}", file=sys.stderr)
+    print(f"Could not get Nabu Casa remote URLs: {last_error}", file=sys.stderr)
     return 1
 
 

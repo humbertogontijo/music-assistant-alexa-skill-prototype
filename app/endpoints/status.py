@@ -124,7 +124,12 @@ def _build_status_json():
                 skill_ask_html = '<span class="muted">ask CLI not available in container</span>'
             else:
                 if os.environ.get('USE_NABU_CASA', '').lower() in ('true', '1', 'yes'):
-                    skill_ask_html = '<span class="muted">Nabu Casa URL is not ready. Restart Home Assistant once after the first start, with Home Assistant Cloud signed in, then start this add-on again.</span>'
+                    skill_ask_html = (
+                        '<span class="muted">Nabu Casa remote URL is not ready. '
+                        'Start this add-on once, restart Home Assistant, add the '
+                        'Music Assistant Alexa Skill integration, turn on Cloud remote access, '
+                        'then start this add-on again.</span>'
+                    )
                 else:
                     skill_ask_html = '<span class="muted">SKILL_HOSTNAME not configured</span>'
     except Exception as e:
