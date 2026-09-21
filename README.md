@@ -40,7 +40,7 @@ This repository is a Home Assistant add-on repository. `config.json` sits next t
 
 Use it as the skill service in the [Music Assistant Alexa player provider](https://www.music-assistant.io/player-support/alexa/) setup. Amazon account URL, email, password, and OTP secret stay in Music Assistant. This add-on is the service Music Assistant calls.
 
-1. In Home Assistant: Settings → Add-ons → Add-on Store → ⋮ → Repositories. Add this repository's URL.
+1. In Home Assistant: Settings → Add-ons → Add-on Store → ⋮ → Repositories. Add `https://github.com/humbertogontijo/music-assistant-alexa-skill-prototype`.
 2. Install **Music Assistant Alexa Skill**.
 3. For the skill endpoint, either set `SKILL_HOSTNAME` to your own HTTPS host, or turn on `USE_NABU_CASA` and leave `SKILL_HOSTNAME` empty. With Nabu Casa, start the add-on once, restart Home Assistant, then start the add-on again. It copies a small integration into Home Assistant and uses a `https://hooks.nabu.casa/...` URL as the Alexa skill endpoint. Home Assistant Cloud must be signed in. Music Assistant's **API URL** stays `http://<Home Assistant host>:5000`.
 4. Set `MA_HOSTNAME` when an Echo without a screen will play audio. That address is where the Echo downloads the stream (Music Assistant port 8097). Nabu Casa does not publish that stream.
