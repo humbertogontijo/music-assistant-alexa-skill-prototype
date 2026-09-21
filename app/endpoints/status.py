@@ -151,6 +151,11 @@ def _build_status_json():
                 f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
                 f"{content_preview}</pre>"
             )
+        elif resp.status_code == 404:
+            ma_api_html = (
+                '<span class="led yellow"></span> Waiting for Music Assistant to push a stream to /ma/push-url'
+                "<div class='muted'>Play something to an Alexa player in Music Assistant. This stays empty until that push arrives.</div>"
+            )
         else:
             ma_api_html = (
                 f'<span class="led red"></span> Music Assistant API responded {resp.status_code} for /ma/latest-url'
@@ -180,6 +185,11 @@ def _build_status_json():
                 f'<span class="led green"></span> Alexa API reachable ({resp.status_code}) — /alexa/latest-url'
                 f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
                 f"{content_preview}</pre>"
+            )
+        elif resp.status_code == 404:
+            alexa_api_html = (
+                '<span class="led yellow"></span> Waiting for the Alexa skill to start playback'
+                "<div class='muted'>After Music Assistant pushes a stream, it asks Alexa to invoke this skill. Invocations appear below when that happens.</div>"
             )
         else:
             alexa_api_html = (
@@ -246,12 +256,16 @@ def _compute_ma_api_html(api_user=None, api_pass=None):
                 f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
                 f"{content_preview}</pre>"
             )
-        else:
+        if resp.status_code == 404:
             return (
-                f'<span class="led red"></span> Music Assistant API responded {resp.status_code} for /ma/latest-url'
-                f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#fdf2f2;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
-                f"{content_preview}</pre>"
+                '<span class="led yellow"></span> Waiting for Music Assistant to push a stream to /ma/push-url'
+                "<div class='muted'>Play something to an Alexa player in Music Assistant. This stays empty until that push arrives.</div>"
             )
+        return (
+            f'<span class="led red"></span> Music Assistant API responded {resp.status_code} for /ma/latest-url'
+            f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#fdf2f2;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
+            f"{content_preview}</pre>"
+        )
     except RequestException as e:
         return f'<span class="led red"></span> Error: {str(e)}'
 
@@ -279,12 +293,16 @@ def _compute_alexa_api_html(api_user=None, api_pass=None):
                 f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
                 f"{content_preview}</pre>"
             )
-        else:
+        if resp.status_code == 404:
             return (
-                f'<span class="led red"></span> Alexa API responded {resp.status_code} for /alexa/latest-url'
-                f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#fdf2f2;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
-                f"{content_preview}</pre>"
+                '<span class="led yellow"></span> Waiting for the Alexa skill to start playback'
+                "<div class='muted'>After Music Assistant pushes a stream, it asks Alexa to invoke this skill. Invocations appear below when that happens.</div>"
             )
+        return (
+            f'<span class="led red"></span> Alexa API responded {resp.status_code} for /alexa/latest-url'
+            f"<pre class='status-box' tabindex='0' style='white-space:pre-wrap;background:#fdf2f2;padding:8px;border-radius:4px;max-height:200px;overflow:auto;user-select:text'>"
+            f"{content_preview}</pre>"
+        )
     except RequestException as e:
         return f'<span class="led red"></span> Error: {str(e)}'
 
