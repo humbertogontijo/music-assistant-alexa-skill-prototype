@@ -164,13 +164,29 @@ async def _cloudhook_url(hass: HomeAssistant) -> str | None:
         return None
 
 
+async def _request_body(request: web.Request) -> bytes:
+    """Read the body from a normal request or Home Assistant's MockRequest.
+
+    Nabu Casa cloudhooks deliver homeassistant.util.aiohttp.MockRequest, which
+    has no read() method. Real aiohttp requests do.
+    """
+    read = getattr(request, "read", None)
+    if callable(read):
+        return await read()
+    content = getattr(request, "content", None)
+    if content is not None and callable(getattr(content, "read", None)):
+        return await content.read()
+    text = await request.text()
+    return text.encode("utf-8")
+
+
 async def _handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Request) -> web.Response:
     """Forward an Alexa request to the add-on and return its response."""
     base = hass.data.get(DOMAIN, {}).get(_DATA_ADDON_URL)
     if not base:
         return web.Response(status=503, text="Music Assistant Alexa add-on is not registered")
 
-    body = await request.read()
+    body = await _request_body(request)
     headers = {
         key: value
         for key, value in request.headers.items()
