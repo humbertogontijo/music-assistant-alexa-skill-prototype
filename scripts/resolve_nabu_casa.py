@@ -15,9 +15,13 @@ import time
 import urllib.error
 import urllib.request
 
+# /core/api is Supervisor's proxy for Home Assistant's /api.
+# /core/api/states is /api/states, so these paths must not repeat /api.
 API = "http://supervisor/core/api"
 DOMAIN = "music_assistant_alexa_skill"
 PORT = 5000
+CLOUDHOOK_PATH = f"/{DOMAIN}/cloudhook"
+FLOW_PATH = "/config/config_entries/flow"
 
 
 def _token():
@@ -52,7 +56,7 @@ def _addon_base_url():
 def _register():
     status, body = _request(
         "POST",
-        f"/api/{DOMAIN}/cloudhook",
+        CLOUDHOOK_PATH,
         {"addon_base_url": _addon_base_url()},
     )
     return status, body
@@ -63,7 +67,7 @@ def _ensure_config_entry():
     try:
         status, body = _request(
             "POST",
-            "/api/config/config_entries/flow",
+            FLOW_PATH,
             {"handler": DOMAIN},
         )
     except urllib.error.HTTPError as err:
@@ -82,7 +86,7 @@ def _ensure_config_entry():
         try:
             _, stepped = _request(
                 "POST",
-                f"/api/config/config_entries/flow/{flow_id}",
+                f"{FLOW_PATH}/{flow_id}",
                 {},
             )
         except urllib.error.HTTPError as err:
@@ -139,19 +143,18 @@ def main():
         except urllib.error.HTTPError as err:
             detail = err.read().decode("utf-8", errors="replace")
             if err.code == 404:
-                if not _ensure_config_entry():
-                    print(
-                        "The Music Assistant Alexa Skill integration is not loaded yet. "
-                        "Restart Home Assistant once, then start this add-on again. "
-                        "Home Assistant Cloud must be signed in.",
-                        file=sys.stderr,
-                    )
+                if _ensure_config_entry():
+                    continue
+                last_error = (
+                    "The Music Assistant Alexa Skill integration is not loaded yet. "
+                    "Restart Home Assistant once, then start this add-on again. "
+                    "Home Assistant Cloud must be signed in."
+                )
+            else:
+                last_error = f"HTTP {err.code}: {detail}"
+                if err.code in (401, 403, 503):
+                    print(last_error, file=sys.stderr)
                     return 1
-                continue
-            last_error = f"HTTP {err.code}: {detail}"
-            if err.code in (401, 403, 503):
-                print(last_error, file=sys.stderr)
-                return 1
         except urllib.error.URLError as err:
             last_error = str(err.reason)
         except Exception as err:
