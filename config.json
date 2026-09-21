@@ -1,6 +1,6 @@
 {
   "name": "Music Assistant Alexa Skill",
-  "version": "0.0.42-beta",
+  "version": "0.0.43-beta",
   "slug": "music_assistant_skill",
   "description": "Skill service for the Music Assistant Alexa player provider. Amazon account login stays in Music Assistant.",
   "url": "https://www.music-assistant.io/player-support/alexa/",
