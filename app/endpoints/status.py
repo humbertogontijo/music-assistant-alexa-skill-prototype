@@ -16,6 +16,20 @@ from setup_helpers import has_functional_cli_config
 status_bp = Blueprint('status_bp', __name__)
 
 
+def _endpoint_identity(value):
+    """Compare skill endpoints by host and path, ignoring a trailing slash."""
+    raw = (value or '').strip().rstrip('/')
+    if raw.startswith('http://') or raw.startswith('https://'):
+        parsed = urllib.parse.urlparse(raw)
+        return parsed.netloc.lower(), parsed.path.rstrip('/')
+    return raw.lower(), ''
+
+
+def _endpoint_display(value):
+    host, path = _endpoint_identity(value)
+    return f'{host}{path}' if host else value
+
+
 def _build_status_json():
     api_user = get_env_secret('APP_USERNAME')
     api_pass = get_env_secret('APP_PASSWORD')
@@ -28,7 +42,7 @@ def _build_status_json():
             if not has_functional_cli_config(profile='default'):
                 skill_ask_html = '<span class="led yellow"></span> ASK CLI credentials are not configured for profile default'
                 try:
-                    skill_ask_html += ' <button onclick="window.location=\'/setup\'" style="margin-left:8px">Open Setup</button>'
+                    skill_ask_html += ' <button onclick="window.location=\'setup\'" style="margin-left:8px">Open Setup</button>'
                 except Exception:
                     pass
             else:
@@ -42,13 +56,7 @@ def _build_status_json():
                     mf = subprocess.run(['ask', 'smapi', 'get-skill-manifest', '--skill-id', sid, '--profile', 'default'], capture_output=True, text=True)
                     mf_out = mf.stdout or mf.stderr or ''
                     mm = re.search(r'https?://[^"\s\)\]]+', mf_out)
-                    try:
-                        if skill_host.startswith('http://') or skill_host.startswith('https://'):
-                            cfg_host = urllib.parse.urlparse(skill_host).netloc
-                        else:
-                            cfg_host = skill_host
-                    except Exception:
-                        cfg_host = skill_host
+                    configured_endpoint = _endpoint_display(skill_host)
 
                     testing_enabled = False
                     try:
@@ -71,8 +79,7 @@ def _build_status_json():
                     else:
                         uri = mm.group(0)
                         try:
-                            parsed = urllib.parse.urlparse(uri)
-                            manifest_host = parsed.netloc
+                            manifest_endpoint = _endpoint_display(uri)
                             locale_list = []
                             try:
                                 mf_json = None
@@ -94,29 +101,32 @@ def _build_status_json():
 
                             locale_display = ','.join(locale_list) if locale_list else 'unknown'
 
-                            if manifest_host == cfg_host:
+                            if _endpoint_identity(uri) == _endpoint_identity(skill_host):
                                 if testing_enabled:
-                                    skill_ask_html = f'<span class="led green"></span> Music Assistant Skill interaction model found; endpoint matches ({escape(manifest_host)}); testing enabled; locale: {escape(locale_display)}'
+                                    skill_ask_html = f'<span class="led green"></span> Music Assistant Skill interaction model found; endpoint matches ({escape(manifest_endpoint)}); testing enabled; locale: {escape(locale_display)}'
                                     is_green = True
                                 else:
-                                    skill_ask_html = f'<span class="led yellow"></span> Music Assistant Skill interaction model found and endpoint matches ({escape(manifest_host)}); testing NOT enabled'
+                                    skill_ask_html = f'<span class="led yellow"></span> Music Assistant Skill interaction model found and endpoint matches ({escape(manifest_endpoint)}); testing NOT enabled'
                             else:
                                 testing_note = 'testing enabled' if testing_enabled else 'testing not enabled'
-                                skill_ask_html = f'<span class="led red"></span> Music Assistant Skill interaction model endpoint mismatch (manifest: {escape(manifest_host)} vs configured: {escape(cfg_host)}); {testing_note}'
+                                skill_ask_html = f'<span class="led red"></span> Music Assistant Skill interaction model endpoint mismatch (manifest: {escape(manifest_endpoint)} vs configured: {escape(configured_endpoint)}); {testing_note}'
                         except Exception:
                             testing_msg = 'testing enabled' if testing_enabled else 'testing not enabled'
                             skill_ask_html = f'<span class="led yellow"></span> Music Assistant Skill interaction model found; endpoint parse failed ({testing_msg})'
 
                     try:
                         if not is_green:
-                            skill_ask_html += ' <button onclick="window.location=\'/setup\'" style="margin-left:8px">Open Setup</button>'
+                            skill_ask_html += ' <button onclick="window.location=\'setup\'" style="margin-left:8px">Open Setup</button>'
                     except Exception:
                         pass
         else:
             if not shutil.which('ask'):
                 skill_ask_html = '<span class="muted">ask CLI not available in container</span>'
             else:
-                skill_ask_html = '<span class="muted">SKILL_HOSTNAME not configured</span>'
+                if os.environ.get('USE_NABU_CASA', '').lower() in ('true', '1', 'yes'):
+                    skill_ask_html = '<span class="muted">Nabu Casa URL is not ready. Restart Home Assistant once after the first start, with Home Assistant Cloud signed in, then start this add-on again.</span>'
+                else:
+                    skill_ask_html = '<span class="muted">SKILL_HOSTNAME not configured</span>'
     except Exception as e:
         skill_ask_html = f'<span class="muted">ASK check error: {escape(str(e))}</span>'
 
@@ -206,7 +216,7 @@ def _build_status_json():
     intent_logs = current_app.config.get('INTENT_LOGS', [])
     count = len(intent_logs) if intent_logs else 0
     if count:
-        invocations_html = f'<a href="/invocations" target="_blank" rel="noopener noreferrer">View {count} invocations</a>'
+        invocations_html = f'<a href="invocations" target="_blank" rel="noopener noreferrer">View {count} invocations</a>'
     else:
         invocations_html = '<span class="muted">No recent invocations</span>'
 
@@ -350,7 +360,7 @@ def status():
         intent_logs = current_app.config.get('INTENT_LOGS', [])
         count = len(intent_logs) if intent_logs else 0
         if count:
-            invocations_html = f'<a href="/invocations" target="_blank" rel="noopener noreferrer">View {count} invocations</a>'
+            invocations_html = f'<a href="invocations" target="_blank" rel="noopener noreferrer">View {count} invocations</a>'
         else:
             invocations_html = '<span class="muted">No recent invocations</span>'
         tpl = tpl.replace('__INVOCATIONS_HTML__', invocations_html)
@@ -388,7 +398,7 @@ def status_invocations():
     intent_logs = current_app.config.get('INTENT_LOGS', [])
     count = len(intent_logs) if intent_logs else 0
     if count:
-        invocations_html = f'<a href="/invocations" target="_blank" rel="noopener noreferrer">View {count} invocations</a>'
+        invocations_html = f'<a href="invocations" target="_blank" rel="noopener noreferrer">View {count} invocations</a>'
     else:
         invocations_html = '<span class="muted">No recent invocations</span>'
     return jsonify({'count': count, 'invocations_html': invocations_html})
