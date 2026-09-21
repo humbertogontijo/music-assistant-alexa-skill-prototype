@@ -1,7 +1,8 @@
 """Constants for the Music Assistant Alexa skill bridge."""
 
 DOMAIN = "music_assistant_alexa_skill"
-WEBHOOK_ID = "music_assistant_alexa_skill"
 ADDON_PORT = 5000
-STREAM_PATH = "/api/music_assistant_alexa_skill/stream"
+SKILL_PATH = "/api/music_assistant_alexa_skill"
+STREAM_PATH = f"{SKILL_PATH}/stream"
+REGISTER_PATH = f"{SKILL_PATH}/register"
 MA_STREAM_PORT = 8097

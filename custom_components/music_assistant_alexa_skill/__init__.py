@@ -1,7 +1,8 @@
-"""Bridge Alexa skill requests through a Nabu Casa cloud webhook.
+"""Bridge Alexa skill and Echo audio through the Nabu Casa remote UI.
 
-Audio for an Echo is served from the Nabu Casa remote UI. Home Assistant
-forwards those requests to the Music Assistant add-on stream port.
+Both the skill POST endpoint and the stream proxy live under one
+*.ui.nabu.casa API prefix. Home Assistant forwards skill requests to the
+add-on and stream requests to Music Assistant port 8097.
 """
 
 from __future__ import annotations
@@ -12,13 +13,12 @@ from urllib.parse import quote, urlparse
 
 import aiohttp
 from aiohttp import web
-from homeassistant.components import webhook
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import ADDON_PORT, DOMAIN, MA_STREAM_PORT, STREAM_PATH, WEBHOOK_ID
+from .const import ADDON_PORT, DOMAIN, MA_STREAM_PORT, REGISTER_PATH, SKILL_PATH, STREAM_PATH
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +38,6 @@ _HOP_BY_HOP = {
 _FORWARD_REQUEST_HEADERS = ("range", "if-range", "accept")
 
 _DATA_ADDON_URL = "addon_base_url"
-_DATA_CLOUDHOOK_URL = "cloudhook_url"
 _DATA_MA_BASE = "ma_stream_base"
 _DATA_MA_CHECKED = "ma_stream_checked"
 _DATA_VIEW = "view_registered"
@@ -59,8 +58,9 @@ def _valid_addon_url(url: str) -> bool:
 
 
 def _remote_info(hass: HomeAssistant) -> dict:
-    """Public stream prefix on the Nabu Casa remote UI, when it is connected."""
+    """Public skill and stream URLs on the Nabu Casa remote UI."""
     info = {
+        "skill_url": "",
         "remote_stream_url": "",
         "remote_enabled": False,
         "remote_connected": False,
@@ -76,6 +76,7 @@ def _remote_info(hass: HomeAssistant) -> dict:
     connected = bool(getattr(remote, "is_connected", False)) and bool(domain)
     info["remote_connected"] = connected
     if connected:
+        info["skill_url"] = f"https://{domain}{SKILL_PATH}"
         info["remote_stream_url"] = f"https://{domain}{STREAM_PATH}"
     return info
 
@@ -149,44 +150,13 @@ async def _ma_stream_base(hass: HomeAssistant) -> str | None:
     return cached
 
 
-async def _cloudhook_url(hass: HomeAssistant) -> str | None:
-    """Return the Nabu Casa URL for this skill, creating it when needed."""
-    try:
-        from homeassistant.components import cloud
-    except ImportError:
-        return None
-    if not hasattr(cloud, "async_get_or_create_cloudhook"):
-        return None
-    try:
-        return await cloud.async_get_or_create_cloudhook(hass, WEBHOOK_ID)
-    except Exception:
-        _LOGGER.exception("Could not create a Nabu Casa cloud webhook")
-        return None
-
-
-async def _request_body(request: web.Request) -> bytes:
-    """Read the body from a normal request or Home Assistant's MockRequest.
-
-    Nabu Casa cloudhooks deliver homeassistant.util.aiohttp.MockRequest, which
-    has no read() method. Real aiohttp requests do.
-    """
-    read = getattr(request, "read", None)
-    if callable(read):
-        return await read()
-    content = getattr(request, "content", None)
-    if content is not None and callable(getattr(content, "read", None)):
-        return await content.read()
-    text = await request.text()
-    return text.encode("utf-8")
-
-
-async def _handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Request) -> web.Response:
-    """Forward an Alexa request to the add-on and return its response."""
+async def _forward_skill(hass: HomeAssistant, request: web.Request) -> web.Response:
+    """Forward an Alexa skill POST to the add-on."""
     base = hass.data.get(DOMAIN, {}).get(_DATA_ADDON_URL)
     if not base:
         return web.Response(status=503, text="Music Assistant Alexa add-on is not registered")
 
-    body = await _request_body(request)
+    body = await request.read()
     headers = {
         key: value
         for key, value in request.headers.items()
@@ -205,6 +175,22 @@ async def _handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Req
     except aiohttp.ClientError:
         _LOGGER.exception("Music Assistant Alexa add-on did not respond")
         return web.Response(status=502, text="Music Assistant Alexa add-on did not respond")
+
+
+class SkillProxyView(HomeAssistantView):
+    """Public Alexa skill endpoint on the Nabu Casa remote UI.
+
+    Intentionally unauthenticated: Amazon cannot log in to Home Assistant.
+    Requests are authenticated by Alexa signature verification inside the add-on.
+    """
+
+    url = SKILL_PATH
+    name = "api:music_assistant_alexa_skill:skill"
+    requires_auth = False
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        return await _forward_skill(hass, request)
 
 
 class StreamProxyView(HomeAssistantView):
@@ -281,11 +267,11 @@ class StreamProxyView(HomeAssistantView):
             return web.Response(status=502, text="Music Assistant stream server did not respond")
 
 
-class CloudhookView(HomeAssistantView):
-    """Let the add-on publish its address and read the Nabu Casa URL."""
+class RegisterView(HomeAssistantView):
+    """Let the add-on publish its address and read the remote UI URLs."""
 
-    url = "/api/music_assistant_alexa_skill/cloudhook"
-    name = "api:music_assistant_alexa_skill:cloudhook"
+    url = REGISTER_PATH
+    name = "api:music_assistant_alexa_skill:register"
 
     async def get(self, request: web.Request) -> web.Response:
         return await self._response(request, None)
@@ -317,22 +303,29 @@ class CloudhookView(HomeAssistantView):
                     options={**entries[0].options, _DATA_ADDON_URL: store[_DATA_ADDON_URL]},
                 )
 
-        url = await _cloudhook_url(hass)
-        if not url:
+        remote = _remote_info(hass)
+        if not remote["remote_connected"]:
             return self.json(
-                {"error": "Home Assistant Cloud is not connected"},
+                {
+                    "error": "Home Assistant Cloud remote access is not connected",
+                    "skill_url": "",
+                    "remote_stream_url": "",
+                    "addon_base_url": store.get(_DATA_ADDON_URL, ""),
+                    "remote_enabled": remote["remote_enabled"],
+                    "remote_connected": remote["remote_connected"],
+                    "ma_stream_base": "",
+                },
                 status_code=503,
             )
-        store[_DATA_CLOUDHOOK_URL] = url
-        remote = _remote_info(hass)
+
         ma_base = await _ma_stream_base(hass)
-        if remote["remote_stream_url"]:
-            _LOGGER.info("Echo stream URL prefix is %s", remote["remote_stream_url"])
+        _LOGGER.info("Alexa skill remote URL is %s", remote["skill_url"])
+        _LOGGER.info("Echo stream URL prefix is %s", remote["remote_stream_url"])
         return self.json(
             {
-                "cloudhook_url": url,
-                "addon_base_url": store.get(_DATA_ADDON_URL, ""),
+                "skill_url": remote["skill_url"],
                 "remote_stream_url": remote["remote_stream_url"],
+                "addon_base_url": store.get(_DATA_ADDON_URL, ""),
                 "remote_enabled": remote["remote_enabled"],
                 "remote_connected": remote["remote_connected"],
                 "ma_stream_base": ma_base or "",
@@ -341,57 +334,30 @@ class CloudhookView(HomeAssistantView):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Register the webhook and the add-on API."""
+    """Register the public skill and stream views plus the add-on API."""
     store = hass.data.setdefault(DOMAIN, {})
     saved = entry.options.get(_DATA_ADDON_URL)
     if isinstance(saved, str) and _valid_addon_url(saved):
         store[_DATA_ADDON_URL] = saved.rstrip("/")
 
-    try:
-        webhook.async_unregister(hass, WEBHOOK_ID)
-    except KeyError:
-        pass
-    webhook.async_register(
-        hass,
-        DOMAIN,
-        "Music Assistant Alexa Skill",
-        WEBHOOK_ID,
-        _handle_webhook,
-        local_only=False,
-        allowed_methods=["POST"],
-    )
     if not store.get(_DATA_VIEW):
-        hass.http.register_view(CloudhookView())
+        hass.http.register_view(SkillProxyView())
         hass.http.register_view(StreamProxyView())
+        hass.http.register_view(RegisterView())
         store[_DATA_VIEW] = True
 
-    url = await _cloudhook_url(hass)
-    if url:
-        store[_DATA_CLOUDHOOK_URL] = url
-        _LOGGER.info("Alexa skill Nabu Casa URL is %s", url)
+    remote = _remote_info(hass)
+    if remote["skill_url"]:
+        _LOGGER.info("Alexa skill remote URL is %s", remote["skill_url"])
+        _LOGGER.info("Echo stream URL prefix is %s", remote["remote_stream_url"])
     else:
         _LOGGER.warning(
-            "Home Assistant Cloud is not connected, so no public skill URL is available"
+            "Home Assistant Cloud remote access is not connected, "
+            "so no public skill or stream URL is available"
         )
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Drop the webhook registration."""
-    webhook.async_unregister(hass, WEBHOOK_ID)
+    """Unload the config entry."""
     return True
-
-
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove the cloud webhook when the integration is deleted."""
-    try:
-        from homeassistant.components import cloud
-    except ImportError:
-        return
-    delete = getattr(cloud, "async_delete_cloudhook", None)
-    if delete is None:
-        return
-    try:
-        await delete(hass, WEBHOOK_ID)
-    except Exception:
-        _LOGGER.debug("Cloud webhook %s was already gone", WEBHOOK_ID)
