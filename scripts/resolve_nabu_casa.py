@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Resolve a Nabu Casa cloud webhook URL for the Alexa skill endpoint.
+"""Resolve Nabu Casa URLs for the Alexa skill endpoint and the audio stream.
 
-Prints a shell export for SKILL_HOSTNAME on success. Home Assistant Cloud
-must be connected, and this add-on must be allowed to call the Home
-Assistant API.
+Prints shell exports on success. Home Assistant Cloud must be connected,
+and this add-on must be allowed to call the Home Assistant API. When
+remote access is on and MA_HOSTNAME is empty, the stream export is the
+Nabu Casa remote address plus the local stream proxy path.
 """
 import json
+import os
 import shlex
 import socket
 import sys
@@ -93,6 +95,35 @@ def _ensure_config_entry():
     return status == 200 and body.get("type") == "create_entry"
 
 
+def exports_for(body, existing_ma_hostname=""):
+    """Shell lines to eval, plus warnings that should not abort startup."""
+    lines = []
+    warnings = []
+    url = (body.get("cloudhook_url") or "").strip()
+    if url.startswith("https://"):
+        lines.append(f"export SKILL_HOSTNAME={shlex.quote(url)}")
+    stream = (body.get("remote_stream_url") or "").strip()
+    if stream.startswith("https://") and not (existing_ma_hostname or "").strip():
+        lines.append(f"export MA_HOSTNAME={shlex.quote(stream)}")
+    elif not (existing_ma_hostname or "").strip():
+        if body.get("remote_enabled") and not body.get("remote_connected"):
+            warnings.append(
+                "Home Assistant Cloud remote access is enabled but not connected yet, "
+                "so MA_HOSTNAME was left empty."
+            )
+        elif not body.get("remote_enabled"):
+            warnings.append(
+                "Turn on Home Assistant Cloud remote access so an Echo can download audio, "
+                "or set MA_HOSTNAME to your own public stream host."
+            )
+    if stream.startswith("https://") and not (body.get("ma_stream_base") or "").strip():
+        warnings.append(
+            "Music Assistant add-on was not found or is not started. "
+            "Audio forwarding starts once that add-on is running."
+        )
+    return lines, warnings
+
+
 def main():
     if not _token():
         print(
@@ -126,10 +157,26 @@ def main():
         except Exception as err:
             last_error = str(err)
         else:
-            url = (body.get("cloudhook_url") or "").strip()
-            if url.startswith("https://"):
-                print(f"export SKILL_HOSTNAME={shlex.quote(url)}")
-                print(f"Nabu Casa skill URL: {url}", file=sys.stderr)
+            lines, warnings = exports_for(body, os.environ.get("MA_HOSTNAME", ""))
+            if lines:
+                waiting_for_remote = (
+                    body.get("remote_enabled")
+                    and not body.get("remote_connected")
+                    and not (os.environ.get("MA_HOSTNAME") or "").strip()
+                    and attempt < 5
+                )
+                if waiting_for_remote:
+                    time.sleep(3)
+                    continue
+                print("\n".join(lines))
+                url = (body.get("cloudhook_url") or "").strip()
+                stream = (body.get("remote_stream_url") or "").strip()
+                if url:
+                    print(f"Nabu Casa skill URL: {url}", file=sys.stderr)
+                if stream and not (os.environ.get("MA_HOSTNAME") or "").strip():
+                    print(f"Nabu Casa stream URL: {stream}", file=sys.stderr)
+                for warning in warnings:
+                    print(warning, file=sys.stderr)
                 return 0
             last_error = body.get("error") or "cloud webhook URL missing"
             if "not connected" in last_error.lower():

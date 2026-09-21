@@ -43,14 +43,14 @@ Use it as the skill service in the [Music Assistant Alexa player provider](https
 1. In Home Assistant: Settings → Add-ons → Add-on Store → ⋮ → Repositories. Add `https://github.com/humbertogontijo/music-assistant-alexa-skill-prototype`.
 2. Install **Music Assistant Alexa Skill**.
 3. For the skill endpoint, either set `SKILL_HOSTNAME` to your own HTTPS host, or turn on `USE_NABU_CASA` and leave `SKILL_HOSTNAME` empty. With Nabu Casa, start the add-on once, restart Home Assistant, then start the add-on again. It copies a small integration into Home Assistant and uses a `https://hooks.nabu.casa/...` URL as the Alexa skill endpoint. Home Assistant Cloud must be signed in. Music Assistant's **API URL** stays `http://<Home Assistant host>:5000`.
-4. Set `MA_HOSTNAME` when an Echo without a screen will play audio. That address is where the Echo downloads the stream (Music Assistant port 8097). Nabu Casa does not publish that stream.
+4. Leave `MA_HOSTNAME` empty when `USE_NABU_CASA` is on and Home Assistant Cloud remote access is enabled. The add-on sets it to `https://<your-id>.ui.nabu.casa/api/music_assistant_alexa_skill/stream`. Home Assistant forwards that path to the Music Assistant add-on on port 8097. Turn remote access on, and start Music Assistant, before starting this add-on. The whole track travels through the Nabu Casa relay. Set `MA_HOSTNAME` yourself only when you already have another public HTTPS host for port 8097.
 5. In Music Assistant's Alexa provider, set **API URL** to `http://<Home Assistant host>:5000`. Set **API Basic Auth Username** and **API Basic Auth Password** to this add-on's `APP_USERNAME` and `APP_PASSWORD`. Set **Alexa Language** to the same value as `LOCALE`.
 
 | Add-on option | Music Assistant Alexa page |
 |---|---|
-| `USE_NABU_CASA` | Uses a Home Assistant Cloud webhook as the public skill endpoint. |
+| `USE_NABU_CASA` | Uses a Home Assistant Cloud webhook as the public skill endpoint, and the Cloud remote URL as the audio stream when `MA_HOSTNAME` is empty. |
 | `SKILL_HOSTNAME` | Public HTTPS host Amazon uses to reach this add-on. Leave empty when `USE_NABU_CASA` is on. |
-| `MA_HOSTNAME` | Music Assistant stream host. Required for an Echo without a screen, and for album art. |
+| `MA_HOSTNAME` | Public stream address for an Echo without a screen, and for album art. Leave empty to use the Nabu Casa remote URL. |
 | `APP_USERNAME` / `APP_PASSWORD` | The API basic-auth username and password you enter in Music Assistant. |
 | `LOCALE` | Skill locale. Match the provider's Alexa Language (`en-US`, `en-GB`, `de-DE`, …). |
 | `ENABLE_APL` | Screen layout on Echo Show. Leave off unless you want that layout. |
@@ -60,7 +60,7 @@ Use it as the skill service in the [Music Assistant Alexa player provider](https
 
 ASK CLI credentials and device mappings are stored under `/data`, so an add-on update keeps the skill registration.
 
-Port 5000 is the local skill API used by Music Assistant. Amazon reaches the skill through `SKILL_HOSTNAME` or the Nabu Casa webhook. The Echo still fetches audio from `MA_HOSTNAME`.
+Port 5000 is the local skill API used by Music Assistant. Amazon reaches the skill through `SKILL_HOSTNAME` or the Nabu Casa webhook. An Echo without a screen downloads audio from `MA_HOSTNAME`. With `USE_NABU_CASA` and remote access, that download uses your `*.ui.nabu.casa` address.
 
 ### 3. Using `docker run`
 
